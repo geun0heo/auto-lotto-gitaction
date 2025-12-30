@@ -19,8 +19,14 @@ SLACK_API_URL = "https://slack.com/api/chat.postMessage"
 SLACK_BOT_TOKEN = sys.argv[3]
 SLACK_CHANNEL = sys.argv[4]
 
-# 구매 개수를 설정
+# 구매 개수를 설정 (이제 사용하지 않지만 호환성을 위해 유지)
 COUNT = sys.argv[5]
+
+# 고정 번호 설정
+FIXED_NUMBERS = [
+    [3, 7, 9, 15, 19, 21],
+    [3, 10, 15, 21, 29, 39]
+]
 
 
 class BalanceError(Exception):
@@ -73,10 +79,10 @@ def hook_slack_btn() -> Response:
                         "type": "button",
                         "text": {
                             "type": "plain_text",
-                            "text": "충전하러 가기",  # 버튼에 표시될 텍스트
+                            "text": "충전하러 가기",
                             "emoji": True,
                         },
-                        "url": "https://dhlottery.co.kr/payment.do?method=payment",  # 사용자를 리디렉션할 URL
+                        "url": "https://dhlottery.co.kr/payment.do?method=payment",
                         "action_id": "button_action",
                     }
                 ],
@@ -97,7 +103,7 @@ def run(playwright: Playwright) -> None:
         # 초기 세팅 및 로그인
         # ================================================================ #
 
-        browser = playwright.chromium.launch(headless=True)  # chrome 브라우저를 실행
+        browser = playwright.chromium.launch(headless=True)
         context = browser.new_context()
 
         page = context.new_page()
@@ -108,8 +114,6 @@ def run(playwright: Playwright) -> None:
         page.fill('[placeholder="비밀번호"]', USER_PW)
         page.press('[placeholder="비밀번호"]', "Tab")
 
-        # Press Enter
-        # with page.expect_navigation(url="https://ol.dhlottery.co.kr/olotto/game/game645.do"):
         with page.expect_navigation():
             page.press('form[name="jform"] >> text=로그인', "Enter")
         time.sleep(4)
@@ -122,32 +126,56 @@ def run(playwright: Playwright) -> None:
         money_info: int = int(money_info[2].replace(",", "").replace("원", ""))
         hook_slack(f"로그인 사용자: {user_name}, 예치금: {money_info}")
 
-        # 예치금 잔액 부족 미리 exception
-        if 1000 * int(COUNT) > money_info:
+        # 예치금 잔액 부족 미리 exception (총 5개 구매)
+        if 5000 > money_info:
             raise BalanceError()
 
         # ================================================================ #
-        # 구매하기
+        # 구매하기 - 랜덤 3개
         # ================================================================ #
 
         page.goto(url="https://ol.dhlottery.co.kr/olotto/game/game645.do")
-        # "비정상적인 방법으로 접속하였습니다. 정상적인 PC 환경에서 접속하여 주시기 바랍니다." 우회하기
         page.locator("#popupLayerAlert").get_by_role("button", name="확인").click()
         page.click("text=자동번호발급")
 
-        # 구매할 개수를 선택
-        page.select_option("select", str(COUNT))  # Select 1
+        # 랜덤으로 3개 선택
+        page.select_option("select", "3")
         page.click("text=확인")
-        page.click('input:has-text("구매하기")')  # Click input:has-text("구매하기")
+        page.click('input:has-text("구매하기")')
         time.sleep(2)
-        page.click(
-            'text=확인 취소 >> input[type="button"]'
-        )  # Click text=확인 취소 >> input[type="button"]
+        page.click('text=확인 취소 >> input[type="button"]')
         page.click('input[name="closeLayer"]')
-        # assert page.url == "https://el.dhlottery.co.kr/game/TotalGame.jsp?LottoId=LO40"
+
+        hook_slack("랜덤 3개 구매 완료!")
+
+        # ================================================================ #
+        # 구매하기 - 고정 번호 2개
+        # ================================================================ #
+
+        for idx, numbers in enumerate(FIXED_NUMBERS, 1):
+            page.goto(url="https://ol.dhlottery.co.kr/olotto/game/game645.do")
+            time.sleep(1)
+            
+            # 수동 선택 모드로 변경
+            page.click("text=수동선택")
+            
+            # 각 번호 클릭
+            for num in numbers:
+                page.click(f'input[value="{num}"]')
+            
+            # 확인 버튼 클릭
+            page.click("text=확인")
+            
+            # 구매하기
+            page.click('input:has-text("구매하기")')
+            time.sleep(2)
+            page.click('text=확인 취소 >> input[type="button"]')
+            page.click('input[name="closeLayer"]')
+            
+            hook_slack(f"고정번호 {idx}번 ({', '.join(map(str, numbers))}) 구매 완료!")
 
         hook_slack(
-            f"{COUNT}개 복권 구매 성공! \n자세하게 확인하기: https://dhlottery.co.kr/myPage.do?method=notScratchListView"
+            f"총 5개 복권 구매 성공! (랜덤 3개 + 고정 2개)\n자세하게 확인하기: https://dhlottery.co.kr/myPage.do?method=notScratchListView"
         )
 
         # ================================================================ #
@@ -198,7 +226,6 @@ def run(playwright: Playwright) -> None:
     except Exception as exc:
         hook_slack(exc)
     finally:
-        # End of Selenium
         context.close()
         browser.close()
 
